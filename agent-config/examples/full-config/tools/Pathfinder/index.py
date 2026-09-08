@@ -425,8 +425,12 @@ def _blocked_for(keys_held, cfg):
     return frozenset(door for door in DOOR_TILES if DOOR_TO_KEY[door] not in keys_held)
 
 
-def _evaluate(grid, rows, cols, tour, cfg, cache):
-    """Walk a node tour and score it, or return None if a segment is unreachable."""
+def _evaluate(grid, rows, cols, tour, cfg, cache, treasure):
+    """Walk a node tour and score it, or return None if a segment is unreachable.
+
+    treasure is kept impassable throughout; it is only ever entered when it is
+    the goal of the final segment, because entering it ends the game.
+    """
     moves = []
     visited = set()
     keys_held = set()
@@ -436,7 +440,6 @@ def _evaluate(grid, rows, cols, tour, cfg, cache):
     invocations = 0
     steps = 0
 
-    treasure = tour[-1]
     for index in range(1, len(tour)):
         blocked = _blocked_for(keys_held, cfg)
         segment = _segment(grid, rows, cols, tour[index - 1], tour[index], blocked, cache,
@@ -505,32 +508,101 @@ def _candidates(grid, rows, cols, start, treasure, cfg):
     return [cell for _, cell in nodes[:cfg["max_nodes"]]]
 
 
-def value_path(grid, rows, cols, start, treasure, cfg):
-    """Prize-collecting tour: start -> valuable cells -> treasure.
+def _key_cells(grid, rows, cols, start, treasure):
+    """Every key cell on the map, row-major, excluding start and treasure."""
+    cells = []
+    for r in range(rows):
+        for c in range(cols):
+            if (r, c) in (start, treasure):
+                continue
+            if grid[r][c] in KEY_TILES:
+                cells.append((r, c))
+    return cells
 
-    Greedy insertion keeps the tour feasible at every step, so key-before-door
-    order, the life budget and the time budget all hold for the returned walk.
-    Falls back to the shortest path when no tour can be built.
+
+def _reach_depth(grid, rows, cols, tour, cfg, cache, treasure):
+    """How many leading segments of a tour are actually walkable.
+
+    Keys are picked up as the walk passes over them, so a door met later in the
+    tour may well be open by then. Returns len(tour) - 1 when the whole tour is
+    walkable, which is exactly when _evaluate returns a plan.
     """
-    cache = {}
-    tour = [start, treasure]
-    plan = _evaluate(grid, rows, cols, tour, cfg, cache)
+    keys_held = set()
+    for index in range(1, len(tour)):
+        blocked = _blocked_for(keys_held, cfg)
+        segment = _segment(grid, rows, cols, tour[index - 1], tour[index], blocked, cache,
+                           treasure=treasure)
+        if segment is None:
+            return index - 1
+        for cell in segment[1]:
+            tile = grid[cell[0]][cell[1]]
+            if tile in KEY_TILES:
+                keys_held.add(tile)
+    return len(tour) - 1
 
-    if not _feasible(plan, cfg):
-        # Cannot even reach the treasure within budget — take the shortest walk.
-        fallback = swift_path(grid, rows, cols, start, treasure)
-        return {'path': fallback, 'steps': len(fallback), 'strategy': 'value',
-                'note': 'fell back to shortest path', 'estimated_score': 0,
-                'estimated_time': 0, 'challenges': 0}
 
-    remaining = _candidates(grid, rows, cols, start, treasure, cfg)
+def _seed_keys(grid, rows, cols, tour, cfg, cache, treasure):
+    """Insert key cells until the tour becomes walkable end to end.
 
-    while remaining:
-        best = None
-        for node in remaining:
+    A treasure walled off behind a locked door makes the bare [start, treasure]
+    tour unreachable, and no amount of value-driven insertion fixes that: a key
+    is worth 50 points and would never be picked on its own merit. Detouring
+    for the key is what makes the treasure reachable at all, so it happens
+    first, before anything is chosen for its score.
+
+    An insertion that makes the whole tour walkable wins outright. Failing
+    that, the first insertion that at least reaches the newly placed key is
+    taken and the search repeats, which is what unlocks a key that is itself
+    sitting behind another door.
+
+    Returns (tour, plan, seeded); plan is None when no seeding helped.
+    """
+    pool = [cell for cell in _key_cells(grid, rows, cols, tour[0], treasure)
+            if cell not in tour]
+    seeded = []
+
+    while pool:
+        stepping_stone = None
+        for node in pool:
             for index in range(1, len(tour)):  # never after the treasure
                 trial = tour[:index] + [node] + tour[index:]
-                trial_plan = _evaluate(grid, rows, cols, trial, cfg, cache)
+                depth = _reach_depth(grid, rows, cols, trial, cfg, cache, treasure)
+                if depth == len(trial) - 1:
+                    plan = _evaluate(grid, rows, cols, trial, cfg, cache, treasure)
+                    seeded.append(node)
+                    return trial, plan, seeded
+                if stepping_stone is None and depth >= index:
+                    # The key itself is reachable: collecting it may open the
+                    # door standing between us and one of the other keys.
+                    stepping_stone = (node, trial)
+        if stepping_stone is None:
+            break
+        node, tour = stepping_stone
+        pool.remove(node)
+        seeded.append(node)
+
+    return tour, None, seeded
+
+
+def _insert_by_value(grid, rows, cols, tour, plan, remaining, cfg, cache, treasure,
+                     open_ended=False):
+    """Greedy insertion: repeatedly splice in the node that gains the most score.
+
+    Every trial tour is fully re-evaluated, so key-before-door order, the life
+    budget and the time budget hold for the tour that is returned.
+
+    With open_ended the walk has no fixed terminal and a node may be appended
+    after the last one; otherwise the final node is the treasure and nothing may
+    be placed after it, because entering the treasure ends the game.
+    """
+    remaining = list(remaining)
+    while remaining:
+        best = None
+        limit = len(tour) + 1 if open_ended else len(tour)
+        for node in remaining:
+            for index in range(1, limit):
+                trial = tour[:index] + [node] + tour[index:]
+                trial_plan = _evaluate(grid, rows, cols, trial, cfg, cache, treasure)
                 if not _feasible(trial_plan, cfg):
                     continue
                 gain = trial_plan.score - plan.score
@@ -540,7 +612,38 @@ def value_path(grid, rows, cols, start, treasure, cfg):
             break
         _, node, tour, plan = best
         remaining.remove(node)
+    return tour, plan
 
+
+def _unreachable_note(grid, rows, cols, start, treasure, cache, plan):
+    """Say why the treasure was given up on, so the failure is visible."""
+    if plan is not None:
+        return 'treasure not reachable within the time and life budget; collected what fits'
+    if _segment(grid, rows, cols, start, treasure, frozenset(), cache, treasure=treasure):
+        return ('treasure unreachable without entering a locked door with no key; '
+                'stopped short instead of paying 5 lives')
+    return 'treasure is walled off from the start; collected what is reachable instead'
+
+
+def _open_ended_path(grid, rows, cols, start, treasure, cfg, cache, note):
+    """Best walk that never enters the treasure, for when the treasure is out of reach.
+
+    Walking into a door without its key costs 5 lives unconditionally, which
+    from a 5-life start is instant death and forfeits the whole run. Standing
+    still keeps all five lives (1250 points of life bonus) plus the token bonus,
+    so anything that ends in a locked door is worse than doing nothing. This
+    collects whatever is safely reachable instead and simply stops there.
+    """
+    plan = _evaluate(grid, rows, cols, [start], cfg, cache, treasure)
+    remaining = _candidates(grid, rows, cols, start, treasure, cfg)
+    tour, plan = _insert_by_value(grid, rows, cols, [start], plan, remaining, cfg, cache,
+                                  treasure, open_ended=True)
+    result = _result(plan)
+    result['note'] = note
+    return result
+
+
+def _result(plan):
     return {
         'path': plan.moves,
         'steps': len(plan.moves),
@@ -550,6 +653,36 @@ def value_path(grid, rows, cols, start, treasure, cfg):
         'challenges': plan.invocations,
         'expected_damage': round(plan.damage, 2),
     }
+
+
+def value_path(grid, rows, cols, start, treasure, cfg):
+    """Prize-collecting tour: start -> valuable cells -> treasure.
+
+    Greedy insertion keeps the tour feasible at every step, so key-before-door
+    order, the life budget and the time budget all hold for the returned walk.
+    When the treasure cannot be reached at all the walk stays open-ended and
+    stops short of the treasure rather than charging a locked door.
+    """
+    cache = {}
+    tour = [start, treasure]
+    plan = _evaluate(grid, rows, cols, tour, cfg, cache, treasure)
+    seeded = []
+
+    if plan is None and cfg["door_policy"] != "avoid":
+        # The treasure is walled off behind a locked door: fetch a key first.
+        tour, plan, seeded = _seed_keys(grid, rows, cols, tour, cfg, cache, treasure)
+
+    if not _feasible(plan, cfg):
+        return _open_ended_path(grid, rows, cols, start, treasure, cfg, cache,
+                                _unreachable_note(grid, rows, cols, start, treasure, cache, plan))
+
+    seeded_set = set(seeded)
+    remaining = [cell for cell in _candidates(grid, rows, cols, start, treasure, cfg)
+                 if cell not in seeded_set]
+
+    tour, plan = _insert_by_value(grid, rows, cols, tour, plan, remaining, cfg, cache, treasure)
+
+    return _result(plan)
 
 
 # ---------------------------------------------------------------------------
