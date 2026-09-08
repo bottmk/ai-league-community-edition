@@ -88,6 +88,7 @@ def lambda_handler(event, context):
         lives        (optional) - starting lives, defaults to 5
         door_policy  (optional) - avoid, pass_with_key, or answer. Defaults to avoid
         skip_tiles   (optional) - tile types to leave out of the route, e.g. "c6 c17"
+        t_invoke     (optional) - seconds one challenge answer takes. Defaults to 4.5
     ---
 
     ## Map Definitions
