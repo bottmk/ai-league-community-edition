@@ -257,13 +257,27 @@ class TestTileEconomics:
     def test_a_life_is_worth_the_lives_bonus_multiplier(self, pathfinder):
         assert pathfinder.LIFE_VALUE == 250
 
-    def test_points_and_damage_match_the_game_engine(self, pathfinder):
-        """DEFAULT_TILE_CONFIG in game_runner is what actually scores."""
-        from game_runner import DEFAULT_TILE_CONFIG
+    # Published in the AWS AI League in-game guide (Bonuses / Challenges tabs).
+    # The planner routes on these numbers, so a silent drift here quietly sends
+    # the champion to the wrong tiles. c17 and c18 are absent from the guide and
+    # are deliberately not asserted.
+    OFFICIAL_TILES = {
+        "c1": (400, 1), "c2": (600, 1), "c3": (800, 1), "c4": (500, 1),
+        "c5": (250, 1), "c6": (2000, 2), "c7": (250, 0), "c8": (0, 1),
+        "c23": (1000, 1),
+        "c30": (1000, 5), "c31": (1000, 5), "c32": (1000, 5), "c33": (1000, 5),
+        "c40": (50, 0), "c41": (50, 0), "c42": (50, 0), "c43": (50, 0),
+    }
 
-        for tile, config in DEFAULT_TILE_CONFIG.items():
-            assert pathfinder.TILE_POINTS[tile] == config["points"], tile
-            assert pathfinder.TILE_DAMAGE[tile] == config["damage"], tile
+    def test_points_and_damage_match_the_official_rules(self, pathfinder):
+        for tile, (points, damage) in self.OFFICIAL_TILES.items():
+            assert pathfinder.TILE_POINTS[tile] == points, tile
+            assert pathfinder.TILE_DAMAGE[tile] == damage, tile
+
+    def test_the_boss_outranks_the_treasure(self, pathfinder):
+        """c6 is worth 2000 — more than reaching the treasure — so a planner
+        that skips it to finish early is leaving the biggest prize behind."""
+        assert pathfinder.TILE_POINTS["c6"] > 1000
 
     def test_challenge_value_uses_the_break_even_formula(self, pathfinder):
         """At p*, a challenge is worth exactly nothing: p* = 250D / (P + 250D)."""

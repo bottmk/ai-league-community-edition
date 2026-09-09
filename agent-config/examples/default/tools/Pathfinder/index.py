@@ -30,17 +30,30 @@ DOOR_TO_KEY = {door: key for key, door in KEY_TO_DOOR.items()}
 # every decision below is denominated in points.
 LIFE_VALUE = 250
 
-# Mirrors game_runner.DEFAULT_TILE_CONFIG. The backend values govern scoring —
-# frontend tileData.ts disagrees on c6/c17 damage and is not authoritative.
+# Values published in the AWS AI League in-game guide (Bonuses / Challenges).
+# These govern scoring, so they drive every routing decision below.
+#
+# c17 and c18 do not appear in the official guide and may not exist; their
+# entries are retained from the community edition and are UNVERIFIED. A tile
+# type absent from a map simply never gets looked up, so keeping them is inert.
 TILE_POINTS = {
-    "c1": 400, "c2": 600, "c3": 550, "c4": 800, "c5": 250, "c6": 1000,
-    "c7": 250, "c8": 0, "c17": 750, "c18": 500,
-    "c30": 1000, "c31": 1000, "c32": 1000, "c33": 1000,
-    "c40": 50, "c41": 50, "c42": 50, "c43": 50,
+    "c1": 400,    # Violent Violet — guardrail test
+    "c2": 600,    # Blue Brain — code execution
+    "c3": 800,    # Memento — memory
+    "c4": 500,    # Dark Prophet — web scraping
+    "c5": 250,    # Bonehead — simple question
+    "c6": 2000,   # Dungeon boss — web fetch plus computation
+    "c7": 250,    # coins, collected by walking over the tile
+    "c8": 0,      # spike trap
+    "c23": 1000,  # web fetch
+    "c17": 750, "c18": 500,  # unverified, see note above
+    "c30": 1000, "c31": 1000, "c32": 1000, "c33": 1000,  # doors
+    "c40": 50, "c41": 50, "c42": 50, "c43": 50,          # keys
 }
 TILE_DAMAGE = {
     "c1": 1, "c2": 1, "c3": 1, "c4": 1, "c5": 1, "c6": 2,
-    "c7": 0, "c8": 1, "c17": 2, "c18": 1,
+    "c7": 0, "c8": 1, "c23": 1,
+    "c17": 2, "c18": 1,  # unverified, see note above
     "c30": 5, "c31": 5, "c32": 5, "c33": 5,
     "c40": 0, "c41": 0, "c42": 0, "c43": 0,
 }
@@ -51,7 +64,7 @@ INVOKING_TILES = set(TILE_POINTS) - {COIN, SPIKE}
 # Per-type success probability. Overridable via the p_correct parameter.
 DEFAULT_P_CORRECT = {
     "c1": 0.90, "c2": 0.85, "c3": 0.80, "c4": 0.75, "c5": 0.90, "c6": 0.60,
-    "c17": 0.90, "c18": 0.85,
+    "c23": 0.75, "c17": 0.90, "c18": 0.85,
     "c30": 0.80, "c31": 0.80, "c32": 0.80, "c33": 0.80,
     "c40": 1.00, "c41": 1.00, "c42": 1.00, "c43": 1.00,
 }
