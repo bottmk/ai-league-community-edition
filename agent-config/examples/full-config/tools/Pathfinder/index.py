@@ -7,8 +7,15 @@
 #   get_coins - greedy nearest-coin collection, then treasure
 #   value     - prize-collecting tour under time and life budgets (default)
 #
-# This file is deployed as AgentCoreGatewayTool-Pathfinder.
-# Handler entrypoint: lambda_handler.lambda_handler
+# Deployed as the AgentCoreGatewayTool-<name> Lambda behind the AgentCore
+# Gateway. The gateway hands the tool arguments in flat, at the top level of
+# the event ({"game_map": [...], "strategy": "value"}), and expects
+# {"statusCode": 200, "body": json.dumps(result)} back. The 'body' unwrapping
+# below is a fallback for an API Gateway style invocation.
+#
+# In the AI League environment this file is named lambda_function.py, so the
+# handler setting reads lambda_function.lambda_handler. The Lambda times out at
+# 30 seconds; planning a 10x10 board takes about 0.02.
 
 import heapq
 import json
